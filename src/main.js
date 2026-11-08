@@ -2,6 +2,8 @@ const { app, BrowserWindow, ipcMain, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { startOverlay } = require('./overlay');
+const { flashLights, scanLights } = require('./lights');
+const { speak } = require('./voice');
 
 const PORT = 4721;
 
@@ -24,6 +26,21 @@ const DEFAULTS = {
   ],
   events: [],
   chat: [],
+  lights: {
+    enabled: true,
+    provider: 'hue',
+    color: '#53fc18',
+    hue: { bridge: '', user: '', lightIds: '' },
+    govee: { apiKey: '', device: '', sku: '' },
+  },
+  voice: {
+    enabled: true,
+    provider: 'system',
+    systemVoice: '',
+    rate: 1,
+    apiKey: '',
+    voiceId: '',
+  },
 };
 
 function settingsPath() {
@@ -31,11 +48,28 @@ function settingsPath() {
 }
 
 function loadSettings() {
+  let saved = {};
   try {
-    return { ...DEFAULTS, ...JSON.parse(fs.readFileSync(settingsPath(), 'utf8')) };
+    saved = JSON.parse(fs.readFileSync(settingsPath(), 'utf8'));
   } catch {
-    return structuredClone(DEFAULTS);
+    saved = {};
   }
+  return {
+    ...DEFAULTS,
+    ...saved,
+    goal: { ...DEFAULTS.goal, ...(saved.goal || {}) },
+    alerts: { ...DEFAULTS.alerts, ...(saved.alerts || {}) },
+    lights: {
+      ...DEFAULTS.lights,
+      ...(saved.lights || {}),
+      hue: { ...DEFAULTS.lights.hue, ...(saved.lights?.hue || {}) },
+      govee: { ...DEFAULTS.lights.govee, ...(saved.lights?.govee || {}) },
+    },
+    voice: { ...DEFAULTS.voice, ...(saved.voice || {}) },
+    commands: saved.commands || DEFAULTS.commands,
+    events: saved.events || [],
+    chat: saved.chat || [],
+  };
 }
 
 function saveSettings(next) {
@@ -45,6 +79,7 @@ function saveSettings(next) {
 
 let settings = null;
 let overlay = null;
+let mainWindow = null;
 const queue = [];
 let playing = false;
 
@@ -67,6 +102,8 @@ function pump() {
   playing = true;
   const item = queue.shift();
   overlay.broadcast({ type: 'alert', alert: item });
+  speak(mainWindow, settings, `${item.title}. ${item.detail}`);
+  flashLights(settings).catch((error) => console.error('Lights failed:', error));
   setTimeout(() => {
     playing = false;
     pump();
@@ -108,6 +145,7 @@ function createWindow() {
     },
   });
   win.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
+  mainWindow = win;
 }
 
 app.whenReady().then(() => {
@@ -155,6 +193,7 @@ ipcMain.handle('push-chat', (_event, line) => {
       target: settings.goal.target,
     });
     settings.chat.push({ name: 'MadBot', text: reply, at: Date.now() });
+    speak(mainWindow, settings, reply);
   }
   saveSettings(settings);
   broadcastState();
@@ -162,3 +201,13 @@ ipcMain.handle('push-chat', (_event, line) => {
 });
 
 ipcMain.handle('open-overlay', (_event, url) => shell.openExternal(url));
+
+ipcMain.handle('lights-scan', async () => {
+  const result = await scanLights(settings);
+  saveSettings(settings);
+  return { ...result, settings };
+});
+
+ipcMain.handle('lights-test', async () => flashLights(settings));
+
+ipcMain.handle('voice-test', async (_event, text) => speak(mainWindow, settings, text || 'MadBot is live. Lights and voice are on.'));

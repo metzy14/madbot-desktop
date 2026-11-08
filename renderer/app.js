@@ -1,4 +1,5 @@
-const pages = ['Alerts', 'Chat', 'Goals', 'Commands', 'Overlays'];
+const pages = ['Alerts', 'Chat', 'Goals', 'Commands', 'Lights', 'Voice', 'Overlays'];
+let lightNote = '';
 let state = null;
 let page = 'Alerts';
 
@@ -131,6 +132,106 @@ function renderOverlays() {
   return box;
 }
 
+function renderLights() {
+  const lights = state.settings.lights;
+  const box = card('Smart lights');
+  const provider = document.createElement('select');
+  ['hue', 'govee', 'preview'].forEach((name) => {
+    const option = document.createElement('option');
+    option.value = name;
+    option.textContent = name === 'hue' ? 'Philips Hue' : name === 'govee' ? 'Govee' : 'Preview only';
+    if (lights.provider === name) option.selected = true;
+    provider.appendChild(option);
+  });
+  provider.onchange = async () => { lights.provider = provider.value; await persist(); render(); };
+  box.appendChild(provider);
+  box.append(field('Alert color', lights.color, async (value) => { lights.color = value; await persist(); }, 'color'));
+  if (lights.provider === 'hue') {
+    box.append(
+      field('Bridge IP', lights.hue.bridge, async (value) => { lights.hue.bridge = value.trim(); await persist(); }),
+      field('Light IDs, comma separated', lights.hue.lightIds, async (value) => { lights.hue.lightIds = value; await persist(); })
+    );
+  }
+  if (lights.provider === 'govee') {
+    box.append(
+      field('Govee API key', lights.govee.apiKey, async (value) => { lights.govee.apiKey = value.trim(); await persist(); }),
+      field('Device ID', lights.govee.device, async (value) => { lights.govee.device = value.trim(); await persist(); }),
+      field('Model / SKU', lights.govee.sku, async (value) => { lights.govee.sku = value.trim(); await persist(); })
+    );
+  }
+  const status = document.createElement('p');
+  const actions = document.createElement('div');
+  actions.className = 'row';
+  const scan = document.createElement('button');
+  scan.textContent = 'Find lights';
+  scan.onclick = async () => {
+    const result = await window.madbot.scanLights();
+    if (result.settings) state.settings = result.settings;
+    const names = (result.devices || []).map((device) => device.name).join(', ');
+    lightNote = result.ok ? `Found ${names || 'no lights'}.` : result.error;
+    render();
+  };
+  const test = document.createElement('button');
+  test.className = 'primary';
+  test.textContent = 'Flash lights';
+  test.onclick = async () => {
+    const result = await window.madbot.testLights();
+    status.textContent = result.ok ? 'Lights changed color.' : result.error;
+  };
+  actions.append(scan, test);
+  box.append(actions, status);
+  return box;
+}
+
+function renderVoice() {
+  const voice = state.settings.voice;
+  const box = card('AI voice');
+  const provider = document.createElement('select');
+  [['system', 'This PC'], ['elevenlabs', 'ElevenLabs']].forEach(([id, label]) => {
+    const option = document.createElement('option');
+    option.value = id;
+    option.textContent = label;
+    if (voice.provider === id) option.selected = true;
+    provider.appendChild(option);
+  });
+  provider.onchange = async () => { voice.provider = provider.value; await persist(); render(); };
+  box.appendChild(provider);
+  if (voice.provider === 'system') {
+    const select = document.createElement('select');
+    const voices = window.speechSynthesis ? speechSynthesis.getVoices() : [];
+    const blank = document.createElement('option');
+    blank.value = '';
+    blank.textContent = voices.length ? 'Default voice' : 'Loading voices…';
+    select.appendChild(blank);
+    voices.forEach((item) => {
+      const option = document.createElement('option');
+      option.value = item.name;
+      option.textContent = item.name;
+      if (voice.systemVoice === item.name) option.selected = true;
+      select.appendChild(option);
+    });
+    select.onchange = async () => { voice.systemVoice = select.value; await persist(); };
+    box.appendChild(select);
+  } else {
+    box.append(
+      field('ElevenLabs API key', voice.apiKey, async (value) => { voice.apiKey = value.trim(); await persist(); }),
+      field('Voice ID', voice.voiceId, async (value) => { voice.voiceId = value.trim(); await persist(); })
+    );
+  }
+  const line = document.createElement('input');
+  line.value = 'Welcome to the kennel.';
+  const status = document.createElement('p');
+  const test = document.createElement('button');
+  test.className = 'primary';
+  test.textContent = 'Speak';
+  test.onclick = async () => {
+    const result = await window.madbot.testVoice(line.value);
+    status.textContent = result.ok ? 'Playing.' : (result.error || 'Voice is off.');
+  };
+  box.append(line, test, status);
+  return box;
+}
+
 function render() {
   renderNav();
   main.innerHTML = '';
@@ -139,11 +240,26 @@ function render() {
   const lede = document.createElement('p');
   lede.textContent = 'Desktop control room for alerts, chat, goals, and OBS overlays.';
   main.append(title, lede);
-  const view = { Alerts: renderAlerts, Chat: renderChat, Goals: renderGoals, Commands: renderCommands, Overlays: renderOverlays }[page]();
+  const view = { Alerts: renderAlerts, Chat: renderChat, Goals: renderGoals, Commands: renderCommands, Lights: renderLights, Voice: renderVoice, Overlays: renderOverlays }[page]();
   main.appendChild(view);
 }
 
+window.madbot.onSpeak((payload) => {
+  if (payload.audio) {
+    const audio = new Audio(payload.audio);
+    audio.play();
+    return;
+  }
+  const utter = new SpeechSynthesisUtterance(payload.text);
+  const match = speechSynthesis.getVoices().find((item) => item.name === payload.voice);
+  if (match) utter.voice = match;
+  utter.rate = Number(payload.rate) || 1;
+  speechSynthesis.cancel();
+  speechSynthesis.speak(utter);
+});
+
 window.madbot.boot().then((boot) => {
   state = boot;
+  if (window.speechSynthesis) speechSynthesis.onvoiceschanged = () => { if (page === 'Voice') render(); };
   render();
 });

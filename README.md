@@ -18,4 +18,4 @@ Add a Browser source for each overlay. Set the size to 1920×1080.
 - Goal: `http://127.0.0.1:4721/goal.html`
 - Event list: `http://127.0.0.1:4721/events.html`
 
-The app has to stay open while you stream.
+In the app, open **Lights** for Philips Hue or Govee, and **Voice** for the PC voice or ElevenLabs. Alerts flash the lights and speak the line. Leave MadBot open while you stream.
