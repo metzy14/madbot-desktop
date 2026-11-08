@@ -160,6 +160,7 @@ function renderLights() {
     );
   }
   const status = document.createElement('p');
+  status.textContent = lightNote;
   const actions = document.createElement('div');
   actions.className = 'row';
   const scan = document.createElement('button');
